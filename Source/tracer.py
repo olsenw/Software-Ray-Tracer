@@ -5,7 +5,7 @@ class Tracer:
     def __init__():
         pass
 
-if __name__ == "__main__":
+def test_pillow_numpy():
     '''
     r = np.linspace(0, 255, num=256, dtype=np.uint8)
     print(r.shape)
@@ -31,3 +31,6 @@ if __name__ == "__main__":
     print(rgb.shape)
     im = Image.fromarray(rgb)
     im.save("Renders/helloworld.png")
+
+if __name__ == "__main__":
+    test_pillow_numpy()
