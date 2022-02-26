@@ -20,7 +20,7 @@ class ParametricSphere:
             return float('inf'), float('inf')
         # one (touch sphere) or two solutions (enter exit)
         t1 = (-b + np.sqrt(d)) / (2 * a)
-        t2 = (-b + np.sqrt(d)) / (2 * a)
+        t2 = (-b - np.sqrt(d)) / (2 * a)
         return t1, t2
 
 class RayTracer:
@@ -110,17 +110,15 @@ def test_assign_color():
 
 if __name__ == "__main__":
     scene = [
+        ParametricSphere((0,-1,3), 1, (255,0,0)),
+        ParametricSphere((2,0,4), 1, (0,0,255)),
+        ParametricSphere((-2,0,4), 1, (0,255,0)),
         ParametricSphere((0,-5001,0), 5000, (255,255,0)), # yellow
-        ParametricSphere((0,-1,5), 1, (255,0,0)), # red
-        ParametricSphere((.5,0,6), 1, (0,0,255)), # blue
-        ParametricSphere((-.5,0,6), 1, (0,255,0)), # green
-        # ParametricSphere((0,-1,3), 1, (255,0,0)),
-        # ParametricSphere((2,0,4), 1, (0,0,255)),
-        # ParametricSphere((-2,0,4), 1, (0,255,0)),
         ]
     lights = [
         [0.2], # ambient (intensity)
         [(0.2, (1,4,4))], # directional (intensity, (direction))
         [(0.6, (2,1,0))], # point (intensity, (location))
     ]
+    # RayTracer((40,40)).render(scene, lights).save("Renders/canvas.png")
     RayTracer((400,400)).render(scene, lights).save("Renders/canvas.png")
