@@ -5,7 +5,7 @@ class ParametricSphere:
     def __init__(self, center=(0,0,0), radius=1, color=(0,0,0)):
         self.center = center
         self.radius = radius
-        self.color = color
+        self.color = np.array(color)
     
     def intersections(self, origin, direction):
         offset = np.subtract(origin, self.center)
@@ -27,27 +27,50 @@ class RayTracer:
     def __init__(self, canvas=(400,300), viewport=(1,1,1), camera=(0,0,0), renderDistance=(1,float('inf'))):
         self.canvas = canvas
         self.viewport = viewport
-        self.camera = camera
+        self.camera = np.array(camera)
         self.renderDistance = renderDistance
     
-    def trace(self, cx, cy, scene):
+    def __lighting(self, point, normal, lights):
+        intensity = 0.
+        for a in lights[0]:
+            intensity += a
+        def calc(i, d):
+            # make sure not lighting "behind" object
+            t = np.dot(normal, d)
+            if t > 0:
+                return i * t / (np.linalg.norm(normal) * np.linalg.norm(d))
+            return 0
+        for i, d in lights[1]:
+            intensity += calc(i, d)
+        for i, d in lights[1]:
+            intensity += calc(i, np.subtract(d, point))
+        return intensity
+
+    def __trace(self, cx, cy, scene, lights):
         vx = (cx - self.canvas[0] / 2) * self.viewport[0] / self.canvas[0]
         vy = (-cy + self.canvas[1] / 2) * self.viewport[1] / self.canvas[1]
         closest = (float('inf'), None)
+        direction = np.array((vx, vy, 1))
         for s in scene:
-            t1, t2 = s.intersections(self.camera, (vx, vy, 1))
+            t1, t2 = s.intersections(self.camera, direction)
             if self.renderDistance[0] <= t1 <= self.renderDistance[1] and t1 < closest[0]:
                 closest = (t1, s)
             if self.renderDistance[0] <= t2 <= self.renderDistance[1] and t2 < closest[0]:
                 closest = (t2, s)
-        return closest[1].color if closest[1] else (0,0,0)
+        if not closest[1]:
+            return (0,0,0)
+        point = self.camera + closest[0] * direction
+        s = np.subtract(point, closest[1].center)
+        normal = s / np.linalg.norm(s)
+        color = closest[1].color * self.__lighting(point, normal, lights)
+        return np.clip(color, 0, 255).astype(np.uint8)
 
-    def render(self, scene):
+    def render(self, scene, lights):
         # note that this will be [y][x][channel] when access/update
         canvas = np.zeros((self.canvas[1], self.canvas[0], 3), dtype=np.uint8)
         for y in range(self.canvas[1]):
             for x in range(self.canvas[0]):
-                canvas[y,x] = np.array(self.trace(x, y, scene), dtype=np.uint8)
+                canvas[y,x] = np.array(self.__trace(x, y, scene, lights), dtype=np.uint8)
         return Image.fromarray(canvas)
 
 def test_pillow_numpy():
@@ -87,8 +110,17 @@ def test_assign_color():
 
 if __name__ == "__main__":
     scene = [
-        ParametricSphere((0,-1,3), 1, (255,0,0)),
-        ParametricSphere((2,0,4), 1, (0,0,255)),
-        ParametricSphere((-2,0,4), 1, (0,255,0))
+        ParametricSphere((0,-5001,0), 5000, (255,255,0)), # yellow
+        ParametricSphere((0,-1,5), 1, (255,0,0)), # red
+        ParametricSphere((.5,0,6), 1, (0,0,255)), # blue
+        ParametricSphere((-.5,0,6), 1, (0,255,0)), # green
+        # ParametricSphere((0,-1,3), 1, (255,0,0)),
+        # ParametricSphere((2,0,4), 1, (0,0,255)),
+        # ParametricSphere((-2,0,4), 1, (0,255,0)),
         ]
-    RayTracer((400,400)).render(scene).save("Renders/canvas.png")
+    lights = [
+        [0.2], # ambient (intensity)
+        [(0.2, (1,4,4))], # directional (intensity, (direction))
+        [(0.6, (2,1,0))], # point (intensity, (location))
+    ]
+    RayTracer((400,400)).render(scene, lights).save("Renders/canvas.png")
