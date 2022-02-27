@@ -2,10 +2,11 @@ import numpy as np
 from PIL import Image
 
 class ParametricSphere:
-    def __init__(self, center=(0,0,0), radius=1, color=(0,0,0)):
+    def __init__(self, center=(0,0,0), radius=1, color=(0,0,0), specular=10):
         self.center = center
         self.radius = radius
         self.color = np.array(color)
+        self.specular = specular
     
     def intersections(self, origin, direction):
         offset = np.subtract(origin, self.center)
@@ -30,16 +31,24 @@ class RayTracer:
         self.camera = np.array(camera)
         self.renderDistance = renderDistance
     
-    def __lighting(self, point, normal, lights):
+    def __lighting(self, point, normal, lights, ray, specular):
         intensity = 0.
         for a in lights[0]:
             intensity += a
         def calc(i, d):
+            ans = 0
+            # diffuse
             # make sure not lighting "behind" object
             t = np.dot(normal, d)
             if t > 0:
-                return i * t / (np.linalg.norm(normal) * np.linalg.norm(d))
-            return 0
+                ans += i * t / (np.linalg.norm(normal) * np.linalg.norm(d))
+            # specular
+            if specular >= 0:
+                r = 2 * normal * np.dot(normal, d) - d
+                rv = np.dot(r, ray)
+                if rv > 0:
+                    ans += i * (rv / (np.linalg.norm(r) * np.linalg.norm(ray))) ** specular
+            return ans
         for i, d in lights[1]:
             intensity += calc(i, d)
         for i, d in lights[1]:
@@ -62,7 +71,7 @@ class RayTracer:
         point = self.camera + closest[0] * direction
         s = np.subtract(point, closest[1].center)
         normal = s / np.linalg.norm(s)
-        color = closest[1].color * self.__lighting(point, normal, lights)
+        color = closest[1].color * self.__lighting(point, normal, lights, np.subtract(self.camera, direction), closest[1].specular)
         return np.clip(color, 0, 255).astype(np.uint8)
 
     def render(self, scene, lights):
@@ -110,10 +119,10 @@ def test_assign_color():
 
 if __name__ == "__main__":
     scene = [
-        ParametricSphere((0,-1,3), 1, (255,0,0)),
-        ParametricSphere((2,0,4), 1, (0,0,255)),
-        ParametricSphere((-2,0,4), 1, (0,255,0)),
-        ParametricSphere((0,-5001,0), 5000, (255,255,0)), # yellow
+        ParametricSphere((0,-1,3), 1, (255,0,0), 500),
+        ParametricSphere((2,0,4), 1, (0,0,255), 500),
+        ParametricSphere((-2,0,4), 1, (0,255,0), 10),
+        ParametricSphere((0,-5001,0), 5000, (255,255,0), 1000), # yellow
         ]
     lights = [
         [0.2], # ambient (intensity)
