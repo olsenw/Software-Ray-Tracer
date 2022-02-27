@@ -31,8 +31,19 @@ class RayTracer:
         self.camera = np.array(camera)
         self.renderDistance = renderDistance
     
-    def __lighting(self, point, normal, lights, ray, specular):
+    def __intersection(self, point, direction, scene, t_min, t_max):
+        closest = (float('inf'), None)
+        for s in scene:
+            t1, t2 = s.intersections(point, direction)
+            if t_min <= t1 <= t_max and t1 < closest[0]:
+                closest = (t1, s)
+            if t_min <= t2 <= t_max and t2 < closest[0]:
+                closest = (t2, s)
+        return closest
+
+    def __lighting(self, point, normal, lights, ray, specular, scene):
         intensity = 0.
+        # ambient
         for a in lights[0]:
             intensity += a
         def calc(i, d):
@@ -49,29 +60,31 @@ class RayTracer:
                 if rv > 0:
                     ans += i * (rv / (np.linalg.norm(r) * np.linalg.norm(ray))) ** specular
             return ans
+        # directional
         for i, d in lights[1]:
+            # shadow
+            if self.__intersection(point, d, scene, 0.001, float('inf'))[1]:
+                continue
             intensity += calc(i, d)
+        # point
         for i, d in lights[1]:
-            intensity += calc(i, np.subtract(d, point))
+            p = np.subtract(d, point)
+            if self.__intersection(point, p, scene, 0.001, 1)[1]:
+                continue
+            intensity += calc(i, p)
         return intensity
 
     def __trace(self, cx, cy, scene, lights):
         vx = (cx - self.canvas[0] / 2) * self.viewport[0] / self.canvas[0]
         vy = (-cy + self.canvas[1] / 2) * self.viewport[1] / self.canvas[1]
-        closest = (float('inf'), None)
         direction = np.array((vx, vy, 1))
-        for s in scene:
-            t1, t2 = s.intersections(self.camera, direction)
-            if self.renderDistance[0] <= t1 <= self.renderDistance[1] and t1 < closest[0]:
-                closest = (t1, s)
-            if self.renderDistance[0] <= t2 <= self.renderDistance[1] and t2 < closest[0]:
-                closest = (t2, s)
+        closest = self.__intersection(self.camera, direction, scene, self.renderDistance[0], self.renderDistance[1])
         if not closest[1]:
             return (0,0,0)
         point = self.camera + closest[0] * direction
         s = np.subtract(point, closest[1].center)
         normal = s / np.linalg.norm(s)
-        color = closest[1].color * self.__lighting(point, normal, lights, np.subtract(self.camera, direction), closest[1].specular)
+        color = closest[1].color * self.__lighting(point, normal, lights, np.subtract(self.camera, direction), closest[1].specular, scene)
         return np.clip(color, 0, 255).astype(np.uint8)
 
     def render(self, scene, lights):
@@ -129,5 +142,5 @@ if __name__ == "__main__":
         [(0.2, (1,4,4))], # directional (intensity, (direction))
         [(0.6, (2,1,0))], # point (intensity, (location))
     ]
-    # RayTracer((40,40)).render(scene, lights).save("Renders/canvas.png")
+    RayTracer((40,40)).render(scene, lights).save("Renders/canvas.png")
     RayTracer((400,400)).render(scene, lights).save("Renders/canvas.png")
