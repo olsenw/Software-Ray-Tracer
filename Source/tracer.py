@@ -1,146 +1,234 @@
 import numpy as np
 from PIL import Image
+from math import sqrt
+from abc import ABC, abstractmethod
 
-class ParametricSphere:
-    def __init__(self, center=(0,0,0), radius=1, color=(0,0,0), specular=10):
+# handy utility functions for working with vectors (avoids numpy...)
+class Utility:
+    @staticmethod
+    def add(x,y):
+        if len(x) != len(y):
+            raise Exception("Mismatched Vector Lengths")
+        return tuple(i + j for i,j in zip(x,y))
+
+    @staticmethod
+    def subtract(x,y):
+        if len(x) != len(y):
+            raise Exception("Mismatched Vector Lengths")
+        return tuple(i - j for i,j in zip(x,y))
+
+    @staticmethod
+    def multiply(x,y):
+        if len(x) != len(y):
+            raise Exception("Mismatched Vector Lengths")
+        return tuple(i * j for i,j in zip(x,y))
+
+    @staticmethod
+    def multiply_scalar(s,v):
+        return tuple(s * i for i in v)
+
+    @staticmethod
+    def dot_prod(x,y):
+        if len(x) != len(y):
+            raise Exception("Mismatched Vector Lengths")
+        return sum(i * j for i,j in zip(x,y))
+
+    @staticmethod
+    def length(x):
+        return sqrt(Utility.dot_prod(x,x))
+
+    @staticmethod
+    def normalize(x):
+        l = Utility.length(x)
+        return tuple(i / l for i in x)
+
+# material class describes material properties of an object
+class Material:
+    def __init__(self, color=(255.0,255.0,255.0), specular=10.0, reflectiveness=1.0):
+        self.color = color
+        self.specular = specular
+        self.reflectiveness = reflectiveness
+
+# abstract geometry class
+class Geometry(ABC):
+    def __init__(self, material=None):
+        self.material = material if material else Material()
+
+    @abstractmethod
+    def intersections(self, origin, ray):
+        return []
+
+    @abstractmethod
+    def normal(self, point):
+        return (0,0,1)
+
+# parametric sphere
+class ParametricSphere(Geometry):
+    def __init__(self, center=(0,0,0), radius=1, material=None):
         self.center = center
         self.radius = radius
-        self.color = np.array(color)
-        self.specular = specular
-    
-    def intersections(self, origin, direction):
-        offset = np.subtract(origin, self.center)
+        super().__init__(material)
+
+    def intersections(self, origin, ray):
+        o = Utility.subtract(origin, self.center)
         # parameters for a t^2 + b t + c = 0
-        a = np.dot(direction, direction)
-        b = 2 * np.dot(offset, direction)
-        c = np.dot(offset, offset) - self.radius * self.radius
+        a = Utility.dot_prod(ray, ray)
+        b = 2 * Utility.dot_prod(o, ray)
+        c = Utility.dot_prod(o, o) - self.radius * self.radius
         # discriminant 
         d = b * b - 4 * a * c
-        # zero solutions (no intersections)
+        # no solutions (ray misses sphere)
         if d < 0:
-            return float('inf'), float('inf')
-        # one (touch sphere) or two solutions (enter exit)
-        t1 = (-b + np.sqrt(d)) / (2 * a)
-        t2 = (-b - np.sqrt(d)) / (2 * a)
-        return t1, t2
+            return []
+        # two real solutions (enter/exit sphere)
+        # one solution (touched sphere) [t1 == t2]
+        t1 = (-b + sqrt(d)) / (2 * a)
+        t2 = (-b - sqrt(d)) / (2 * a)
+        return [t1, t2]
 
-class RayTracer:
-    def __init__(self, canvas=(400,300), viewport=(1,1,1), camera=(0,0,0), renderDistance=(1,float('inf'))):
-        self.canvas = canvas
-        self.viewport = viewport
-        self.camera = np.array(camera)
-        self.renderDistance = renderDistance
+    def normal(self, point):
+        # should I check tht point is actually on geometry?
+        return Utility.normalize(Utility.subtract(point, self.center))
+
+# abstract Light class
+class Light(ABC):
+    def __init__(self, intensities):
+        self.intensities = intensities
     
-    def __intersection(self, point, direction, scene, t_min, t_max):
-        closest = (float('inf'), None)
-        for s in scene:
-            t1, t2 = s.intersections(point, direction)
-            if t_min <= t1 <= t_max and t1 < closest[0]:
-                closest = (t1, s)
-            if t_min <= t2 <= t_max and t2 < closest[0]:
-                closest = (t2, s)
-        return closest
+    @abstractmethod
+    def intensity(self, ray, point, geometry, scene):
+        pass
 
-    def __lighting(self, point, normal, lights, ray, specular, scene):
-        intensity = 0.
-        # ambient
-        for a in lights[0]:
-            intensity += a
-        def calc(i, d):
-            ans = 0
-            # diffuse
-            # make sure not lighting "behind" object
-            t = np.dot(normal, d)
-            if t > 0:
-                ans += i * t / (np.linalg.norm(normal) * np.linalg.norm(d))
-            # specular
-            if specular >= 0:
-                r = 2 * normal * np.dot(normal, d) - d
-                rv = np.dot(r, ray)
-                if rv > 0:
-                    ans += i * (rv / (np.linalg.norm(r) * np.linalg.norm(ray))) ** specular
-            return ans
-        # directional
-        for i, d in lights[1]:
-            # shadow
-            if self.__intersection(point, d, scene, 0.001, float('inf'))[1]:
-                continue
-            intensity += calc(i, d)
-        # point
-        for i, d in lights[1]:
-            p = np.subtract(d, point)
-            if self.__intersection(point, p, scene, 0.001, 1)[1]:
-                continue
-            intensity += calc(i, p)
-        return intensity
+    def _intensity(self, direction, normal, ray, material):
+        i = (0.0, 0.0, 0.0)
+        '''
+        diffuse lighting
+        '''
+        t = Utility.dot_prod(normal, direction)
+        if t > 0:
+            t /= Utility.length(normal) * Utility.length(direction)
+            m = Utility.multiply_scalar(t, self.intensities)
+            i = Utility.add(i, m)
+        '''
+        specular lighting
+        '''
+        if material.specular >= 0:
+            r = 2 * Utility.dot_prod(normal, direction)
+            r = Utility.multiply_scalar(r, normal)
+            r = Utility.subtract(r, direction)
+            rv = Utility.dot_prod(r, ray)
+            if rv > 0:
+                rv = rv / (Utility.length(r) * Utility.length(ray))
+                m = Utility.multiply_scalar(rv ** material.specular, self.intensities)
+                i = Utility.add(i, m)
+        return i
 
-    def __trace(self, cx, cy, scene, lights):
-        vx = (cx - self.canvas[0] / 2) * self.viewport[0] / self.canvas[0]
-        vy = (-cy + self.canvas[1] / 2) * self.viewport[1] / self.canvas[1]
-        direction = np.array((vx, vy, 1))
-        closest = self.__intersection(self.camera, direction, scene, self.renderDistance[0], self.renderDistance[1])
-        if not closest[1]:
-            return (0,0,0)
-        point = self.camera + closest[0] * direction
-        s = np.subtract(point, closest[1].center)
-        normal = s / np.linalg.norm(s)
-        color = closest[1].color * self.__lighting(point, normal, lights, np.subtract(self.camera, direction), closest[1].specular, scene)
-        return np.clip(color, 0, 255).astype(np.uint8)
+class AmbientLight(Light):
+    def __init__(self, intensities):
+        super().__init__(intensities)
 
-    def render(self, scene, lights):
+    def intensity(self, ray, point, geometry, scene):
+        return self.intensities
+
+class DirectionalLight(Light):
+    def __init__(self, intensities, direction):
+        self.direction = direction
+        super().__init__(intensities)
+
+    def intensity(self, ray, point, geometry, scene):
+        # shadow check
+        if scene.intersection(point, self.direction)[1]:
+            return (0.0, 0.0, 0.0)
+        n = geometry.normal(point)
+        m = geometry.material
+        return self._intensity(self.direction, n, ray, m)
+
+class PointLight(Light):
+    def __init__(self, intensities, position):
+        self.position = position
+        super().__init__(intensities)
+
+    def intensity(self, ray, point, geometry, scene):
+        direction = Utility.subtract(self.position, point)
+        # shadow check
+        if scene.intersection(point, direction)[1]:
+            return (0.0, 0.0, 0.0)
+        n = geometry.normal(point)
+        m = geometry.material
+        return self._intensity(direction, n, ray, m)
+
+# scene class
+class Scene:
+    def __init__(self, geometry=[], lights=[], background=(0.0,0.0,0.0)):
+        self.geometry = geometry
+        self.lights = lights
+        self.background = background # default color to render 
+    
+    # return closest geometry that intersects ray
+    def intersection(self, origin, ray, tmin=0.001, tmax=float('inf')):
+        closest = float('inf')
+        geometry = None
+        for g in self.geometry:
+            for i in g.intersections(origin, ray):
+                if i < closest and tmin <= i <= tmax:
+                    closest = i
+                    geometry = g
+        return closest, geometry
+    
+    def trace_ray(self, origin, ray, tmin=0.001, tmax=float('inf')):
+        '''
+        Find closest geometry that ray hits
+        '''
+        closest, geometry = self.intersection(origin, ray, tmin, tmax)
+        # did not hit anything
+        if not geometry:
+            return self.background
+        '''
+        Compute the color at point on geometry
+        ie lighting
+        '''
+        c = geometry.material.color
+        intensity = (0.0, 0.0, 0.0)
+        r = Utility.subtract(origin, ray)
+        point = Utility.add(origin, Utility.multiply_scalar(closest, ray))
+        for l in self.lights:
+            intensity = Utility.add(intensity, l.intensity(r, point, geometry, self))
+        return Utility.multiply(c, intensity)
+
+# Raytracer class
+class RayTracer:
+    def __init__(self, viewport=(1.0,1.0,1.0), camera=(0.0,0.0,0.0), rmin=1.0, rmax=float('inf')):
+        # should do type checking of parameters here...
+        self.viewport = viewport # width, height, depth
+        self.camera = camera # x,y,z
+        self.rmin = rmin # minimum render distance
+        self.rmax = rmax # maximum render distance
+    
+    # renders given scene to a PIL Image with given dimensions
+    def render(self, scene, width=400, height=300):
         # note that this will be [y][x][channel] when access/update
-        canvas = np.zeros((self.canvas[1], self.canvas[0], 3), dtype=np.uint8)
-        for y in range(self.canvas[1]):
-            for x in range(self.canvas[0]):
-                canvas[y,x] = np.array(self.__trace(x, y, scene, lights), dtype=np.uint8)
-        return Image.fromarray(canvas)
-
-def test_pillow_numpy():
-    '''
-    r = np.linspace(0, 255, num=256, dtype=np.uint8)
-    print(r.shape)
-    g = np.zeros(256, dtype=np.uint8)
-    print(g.shape)
-    b = np.linspace(255, 0, num=256, dtype=np.uint8)
-    print(b.shape)
-    rgb = np.column_stack((r,g,b))
-    print(rgb.shape)
-    rgb = rgb.reshape((16,16,3))
-    print(rgb.shape)
-    im = Image.fromarray(rgb)
-    im.save("Renders/helloworld.png")
-    '''
-    # equivlent to above
-    r = np.linspace(0, 255, num=256, dtype=np.uint8).reshape((16,16))
-    print(r.shape)
-    g = np.zeros(256, dtype=np.uint8).reshape((16,16))
-    print(g.shape)
-    b = np.linspace(255, 0, num=256, dtype=np.uint8).reshape((16,16))
-    print(b.shape)
-    rgb = np.dstack((r,g,b))
-    print(rgb.shape)
-    im = Image.fromarray(rgb)
-    im.save("Renders/helloworld.png")
-
-def test_assign_color():
-    # note that this will be [y][x][channel] when access/update
-    canvas = np.zeros((600,800,3), dtype=np.uint8)
-    print(canvas[300,400])
-    canvas[290:310,390:410] = (255,0, 126)
-    print(canvas[300,400])
-    Image.fromarray(canvas).save("Renders/canvas.png")
+        canvas = np.zeros((height, width, 3))
+        for y in range(height):
+            for x in range(width):
+                vx = (x - width / 2) * self.viewport[0] / width
+                vy = (-y + height / 2) * self.viewport[1] / height
+                ray = (vx, vy, self.viewport[2])
+                canvas[y][x] = scene.trace_ray(self.camera, ray, self.rmin, self.rmax)
+        return Image.fromarray(np.clip(canvas, 0, 255).astype(np.uint8))
 
 if __name__ == "__main__":
-    scene = [
-        ParametricSphere((0,-1,3), 1, (255,0,0), 500),
-        ParametricSphere((2,0,4), 1, (0,0,255), 500),
-        ParametricSphere((-2,0,4), 1, (0,255,0), 10),
-        ParametricSphere((0,-5001,0), 5000, (255,255,0), 1000), # yellow
-        ]
-    lights = [
-        [0.2], # ambient (intensity)
-        [(0.2, (1,4,4))], # directional (intensity, (direction))
-        [(0.6, (2,1,0))], # point (intensity, (location))
+    # add geometry to scene
+    g = [
+        ParametricSphere((0,-1,3), 1, Material((255,0,0), 500)),
+        ParametricSphere((2,0,4), 1, Material((0,0,255), 500)),
+        ParametricSphere((-2,0,4), 1, Material((0,255,0), 10)),
+        ParametricSphere((0,-5001,0), 5000, Material((255,255,0), 1000)), # yellow
     ]
-    RayTracer((40,40)).render(scene, lights).save("Renders/canvas.png")
-    RayTracer((400,400)).render(scene, lights).save("Renders/canvas.png")
+    # add lighting to scene
+    l = [
+        AmbientLight((0.2,0.2,0.2)),
+        DirectionalLight((0.2,0.2,0.2), (1,4,4)),
+        PointLight((0.6,0.6,0.6), (2,1,0)),
+    ]
+    # render scene
+    RayTracer().render(Scene(g,l), 300, 300).save("Renders/canvas.png")
