@@ -42,6 +42,18 @@ class Utility:
         l = Utility.length(x)
         return tuple(i / l for i in x)
 
+    @staticmethod
+    def reflect(ray, normal):
+        r = 2 * Utility.dot_prod(normal, ray)
+        r = Utility.multiply_scalar(r, normal)
+        return Utility.subtract(r, ray)
+
+    @staticmethod
+    def blend(x,y,r):
+        x = Utility.multiply_scalar(1-r,x)
+        y = Utility.multiply_scalar(r,y)
+        return Utility.add(x,y)
+
 # material class describes material properties of an object
 class Material:
     def __init__(self, color=(255.0,255.0,255.0), specular=10.0, reflectiveness=1.0):
@@ -96,7 +108,7 @@ class Light(ABC):
         self.intensities = intensities
     
     @abstractmethod
-    def intensity(self, ray, point, geometry, scene):
+    def intensity(self, ray, point, normal, material, scene):
         pass
 
     def _intensity(self, direction, normal, ray, material):
@@ -113,9 +125,7 @@ class Light(ABC):
         specular lighting
         '''
         if material.specular >= 0:
-            r = 2 * Utility.dot_prod(normal, direction)
-            r = Utility.multiply_scalar(r, normal)
-            r = Utility.subtract(r, direction)
+            r = Utility.reflect(direction, normal)
             rv = Utility.dot_prod(r, ray)
             if rv > 0:
                 rv = rv / (Utility.length(r) * Utility.length(ray))
@@ -127,7 +137,7 @@ class AmbientLight(Light):
     def __init__(self, intensities):
         super().__init__(intensities)
 
-    def intensity(self, ray, point, geometry, scene):
+    def intensity(self, ray, point, normal, material, scene):
         return self.intensities
 
 class DirectionalLight(Light):
@@ -135,27 +145,23 @@ class DirectionalLight(Light):
         self.direction = direction
         super().__init__(intensities)
 
-    def intensity(self, ray, point, geometry, scene):
+    def intensity(self, ray, point, normal, material, scene):
         # shadow check
         if scene.intersection(point, self.direction)[1]:
             return (0.0, 0.0, 0.0)
-        n = geometry.normal(point)
-        m = geometry.material
-        return self._intensity(self.direction, n, ray, m)
+        return self._intensity(self.direction, normal, ray, material)
 
 class PointLight(Light):
     def __init__(self, intensities, position):
         self.position = position
         super().__init__(intensities)
 
-    def intensity(self, ray, point, geometry, scene):
+    def intensity(self, ray, point, normal, material, scene):
         direction = Utility.subtract(self.position, point)
         # shadow check
         if scene.intersection(point, direction)[1]:
             return (0.0, 0.0, 0.0)
-        n = geometry.normal(point)
-        m = geometry.material
-        return self._intensity(direction, n, ray, m)
+        return self._intensity(direction, normal, ray, material)
 
 # scene class
 class Scene:
@@ -175,7 +181,7 @@ class Scene:
                     geometry = g
         return closest, geometry
     
-    def trace_ray(self, origin, ray, tmin=0.001, tmax=float('inf')):
+    def trace_ray(self, origin, ray, tmin=0.001, tmax=float('inf'), recursion_limit=0):
         '''
         Find closest geometry that ray hits
         '''
@@ -187,13 +193,24 @@ class Scene:
         Compute the color at point on geometry
         ie lighting
         '''
-        c = geometry.material.color
         intensity = (0.0, 0.0, 0.0)
-        r = Utility.subtract(origin, ray)
         point = Utility.add(origin, Utility.multiply_scalar(closest, ray))
+        ray = Utility.multiply_scalar(-1, ray)
+        normal = geometry.normal(point)
         for l in self.lights:
-            intensity = Utility.add(intensity, l.intensity(r, point, geometry, self))
-        return Utility.multiply(c, intensity)
+            intensity = Utility.add(intensity, l.intensity(ray, point, normal, geometry.material, self))
+        c = Utility.multiply(geometry.material.color, intensity)
+        '''
+        Compute reflections
+        '''
+        if recursion_limit <= 0 or geometry.material.reflectiveness <= 0:
+            return c
+        reflect = Utility.reflect(ray, normal)
+        rc = self.trace_ray(point, reflect, 0.001, float('inf'), recursion_limit-1)
+        '''
+        Final color (local color blended with reflected colors)
+        '''
+        return Utility.blend(c, rc, geometry.material.reflectiveness)
 
 # Raytracer class
 class RayTracer:
@@ -213,16 +230,16 @@ class RayTracer:
                 vx = (x - width / 2) * self.viewport[0] / width
                 vy = (-y + height / 2) * self.viewport[1] / height
                 ray = (vx, vy, self.viewport[2])
-                canvas[y][x] = scene.trace_ray(self.camera, ray, self.rmin, self.rmax)
+                canvas[y][x] = scene.trace_ray(self.camera, ray, self.rmin, self.rmax, 3)
         return Image.fromarray(np.clip(canvas, 0, 255).astype(np.uint8))
 
 if __name__ == "__main__":
     # add geometry to scene
     g = [
-        ParametricSphere((0,-1,3), 1, Material((255,0,0), 500)),
-        ParametricSphere((2,0,4), 1, Material((0,0,255), 500)),
-        ParametricSphere((-2,0,4), 1, Material((0,255,0), 10)),
-        ParametricSphere((0,-5001,0), 5000, Material((255,255,0), 1000)), # yellow
+        ParametricSphere((0,-1,3), 1, Material((255,0,0), 500, 0.2)),
+        ParametricSphere((2,0,4), 1, Material((0,0,255), 500, 0.3)),
+        ParametricSphere((-2,0,4), 1, Material((0,255,0), 10, 0.4)),
+        ParametricSphere((0,-5001,0), 5000, Material((255,255,0), 1000, 0.5)), # yellow
     ]
     # add lighting to scene
     l = [
