@@ -34,6 +34,24 @@ class Utility:
         return sum(i * j for i,j in zip(x,y))
 
     @staticmethod
+    def cross_prod(x,y):
+        if len(x) != 3:
+            raise Exception("Cross Product Only Implemented For Three Dimensions")
+        if len(x) != len(y):
+            raise Exception("Mismatched Vector Lengths")
+        return (
+            x[1]*y[2] - x[2]*y[1],
+            x[2]*y[0] - x[0]*y[2],
+            x[0]*y[1] - x[1]*y[0]
+        )
+
+    @staticmethod
+    def matrix_multiply(m,v):
+        if len(m) != len(v) or not all([len(i) == len(v) for i in m]):
+            raise Exception("Matrix Vector Dimensions don't Match")
+        return tuple(sum(Utility.multiply(i,v)) for i in m)
+
+    @staticmethod
     def length(x):
         return sqrt(Utility.dot_prod(x,x))
 
@@ -212,25 +230,34 @@ class Scene:
         '''
         return Utility.blend(c, rc, geometry.material.reflectiveness)
 
+class Camera:
+    def __init__(self, position=None, direction=None, up=None, rmin=None, rmax=None):
+        self.position = position if position else (0.0, 0.0, 0.0)
+        self.rmin = rmin if rmin else 1.0
+        self.rmax = rmax if rmax else float('inf')
+        # create rotaion matrix
+        # https://gamedev.stackexchange.com/questions/124667/how-does-a-4x4-matrix-represent-an-object-in-space-and-matrix-lore/124669#124669
+        direction = Utility.normalize(direction) if direction else (1.0, 0.0, 0.0)
+        up = Utility.normalize(up) if up else (0.0,1.0,0.0)
+        cross = Utility.normalize(Utility.cross_prod(direction, up))
+        self.rotation = tuple((i,j,k) for i,j,k in zip(direction, up, cross))
+
 # Raytracer class
 class RayTracer:
-    def __init__(self, viewport=(1.0,1.0,1.0), camera=(0.0,0.0,0.0), rmin=1.0, rmax=float('inf')):
+    def __init__(self, camera=None):
         # should do type checking of parameters here...
-        self.viewport = viewport # width, height, depth
-        self.camera = camera # x,y,z
-        self.rmin = rmin # minimum render distance
-        self.rmax = rmax # maximum render distance
+        self.camera = camera if camera else Camera()
     
     # renders given scene to a PIL Image with given dimensions
-    def render(self, scene, width=400, height=300):
+    def render(self, scene, width=400, height=300, reflections=3):
         # note that this will be [y][x][channel] when access/update
         canvas = np.zeros((height, width, 3))
         for y in range(height):
             for x in range(width):
-                vx = (x - width / 2) * self.viewport[0] / width
-                vy = (-y + height / 2) * self.viewport[1] / height
-                ray = (vx, vy, self.viewport[2])
-                canvas[y][x] = scene.trace_ray(self.camera, ray, self.rmin, self.rmax, 3)
+                vx = (x - width / 2) * 1.0 / width
+                vy = (-y + height / 2) * 1.0 / height
+                ray = Utility.matrix_multiply(self.camera.rotation, (vx, vy, self.camera.rmin))
+                canvas[y][x] = scene.trace_ray(self.camera.position, ray, self.camera.rmin, self.camera.rmax, reflections)
         return Image.fromarray(np.clip(canvas, 0, 255).astype(np.uint8))
 
 if __name__ == "__main__":
@@ -247,5 +274,11 @@ if __name__ == "__main__":
         DirectionalLight((0.2,0.2,0.2), (1,4,4)),
         PointLight((0.6,0.6,0.6), (2,1,0)),
     ]
+    # camera
+    c = Camera(
+        position =  (4, 0, 0),
+        direction = (1.0,0.0,1.0),
+        up =        (0.0,1.0,0.0)
+    )
     # render scene
-    RayTracer().render(Scene(g,l), 300, 300).save("Renders/canvas.png")
+    RayTracer(c).render(Scene(g,l), 300, 300).save("Renders/camera.png")
